@@ -45,7 +45,7 @@ button{cursor:pointer}
 .ln .r{font:700 1.45rem/1.2 var(--f-sing);letter-spacing:-.01em;text-wrap:balance}
 .ln .o{font-size:.85rem;color:var(--dim);margin-top:2px}
 .ln .m{font-size:.95rem;color:var(--meaning);margin-top:4px;font-style:italic}
-.ln .m:empty::after{content:"…";color:var(--dim)}
+.ln .m:empty::after{content:"translating…";color:var(--dim);font-size:.85rem}
 .ln.gap .r{color:var(--dim);font-size:1.1rem}
 .ln.on{opacity:1}
 .ln.on .r{color:var(--saffron);font-size:1.9rem}
@@ -138,6 +138,8 @@ input[type=text]{width:100%;min-width:0;background:var(--ink-2);border:1px solid
   <button class="btn ghost" id="clearCache" hidden>Clear saved lyrics</button>
   <button class="btn ghost" id="logout" hidden>Log out of Spotify</button>
   <div class="err-box" id="setupErr"></div>
+  <button class="btn ghost" id="testBtn">Test translators</button>
+  <pre class="note" id="diag" style="white-space:pre-wrap;font-family:inherit;margin-top:12px"></pre>
   <p class="note" style="margin-top:22px">Everything stays on this phone. Keys and lyrics are saved only in this browser.</p>
 </section>
 
@@ -308,31 +310,147 @@ ${JSON.stringify(texts)}`;
   return arr.map((o, i) => ({ r: plainify(String(o.r || texts[i])), m: String(o.m || "") }));
 }
 
-async function gtx(text){
-  const u = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&dt=rm&q=" + encodeURIComponent(text);
-  const r = await fetch(u);
-  if(!r.ok) throw new Error("Translate " + r.status);
-  const d = await r.json();
-  let tr = "", rm = "";
-  for(const seg of d[0] || []){
-    if(seg[0] != null) tr += seg[0];
-    else if(seg[3]) rm += seg[3];
+/* Local romanization for Gurmukhi (Punjabi) and Devanagari (Hindi, Haryanvi).
+   Works offline and instantly, spelled the casual way people type lyrics: "mainu", "yaar", "mod", "paisa". */
+const SCRIPTS = {
+  guru: {
+    test: /[਀-੿]/,
+    indep: { "ਅ":"a","ਆ":"aa","ਇ":"i","ਈ":"ee","ਉ":"u","ਊ":"oo","ਏ":"e","ਐ":"ai","ਓ":"o","ਔ":"au" },
+    carrier: { "ੳ":"u", "ੲ":"i" },
+    cons: { "ਕ":"k","ਖ":"kh","ਗ":"g","ਘ":"gh","ਙ":"ng","ਚ":"ch","ਛ":"chh","ਜ":"j","ਝ":"jh","ਞ":"n","ਟ":"t","ਠ":"th","ਡ":"d","ਢ":"dh","ਣ":"n",
+            "ਤ":"t","ਥ":"th","ਦ":"d","ਧ":"dh","ਨ":"n","ਪ":"p","ਫ":"ph","ਬ":"b","ਭ":"bh","ਮ":"m","ਯ":"y","ਰ":"r","ਲ":"l","ਵ":"v","ੜ":"d","ਸ":"s","ਹ":"h" },
+    nukta: { "ਸ":"sh","ਖ":"kh","ਗ":"gh","ਜ":"z","ਫ":"f","ਲ":"l","ਕ":"q" },
+    matra: { "ਾ":"aa","ਿ":"i","ੀ":"ee","ੁ":"u","ੂ":"oo","ੇ":"e","ੈ":"ai","ੋ":"o","ੌ":"au" },
+    nasal: "ੰਂ", gem: "ੱ", virama: "੍", nuktaSign: "਼", visarga: "ਃ", skip: "ੑੵ",
+    digits: "੦੧੨੩੪੫੬੭੮੯"
+  },
+  deva: {
+    test: /[ऀ-ॿ]/,
+    indep: { "अ":"a","आ":"aa","इ":"i","ई":"ee","उ":"u","ऊ":"oo","ऋ":"ri","ए":"e","ऐ":"ai","ओ":"o","औ":"au","ऑ":"o","ऍ":"e" },
+    carrier: {},
+    cons: { "क":"k","ख":"kh","ग":"g","घ":"gh","ङ":"n","च":"ch","छ":"chh","ज":"j","झ":"jh","ञ":"n","ट":"t","ठ":"th","ड":"d","ढ":"dh","ण":"n",
+            "त":"t","थ":"th","द":"d","ध":"dh","न":"n","प":"p","फ":"ph","ब":"b","भ":"bh","म":"m","य":"y","र":"r","ल":"l","ळ":"l","व":"v",
+            "श":"sh","ष":"sh","स":"s","ह":"h" },
+    nukta: { "क":"q","ख":"kh","ग":"gh","ज":"z","ड":"d","ढ":"dh","फ":"f","य":"y" },
+    matra: { "ा":"aa","ि":"i","ी":"ee","ु":"u","ू":"oo","ृ":"ri","े":"e","ै":"ai","ो":"o","ौ":"au","ॅ":"e","ॉ":"o" },
+    nasal: "ंँ", gem: "", virama: "्", nuktaSign: "़", visarga: "ः", skip: "",
+    digits: "०१२३४५६७८९"
   }
-  return { r: isLatin(text) || !rm ? text : plainify(rm), m: tr };
+};
+const DANDA = /[।॥]/g;
+
+function romanWord(word, S){
+  const U = [];               // units: { c, base, v, nasal, gem, post }
+  let gem = false;
+  for(const ch of word){
+    const last = U[U.length - 1];
+    if(S.cons[ch]){ U.push({ c:S.cons[ch], base:ch, v:"A", gem }); gem = false; }
+    else if(ch === S.nuktaSign){ if(last?.base && S.nukta[last.base]) last.c = S.nukta[last.base]; }
+    else if(S.matra[ch]){ if(last && (last.v === "A" || last.carrier)) last.v = S.matra[ch]; else U.push({ c:"", v:S.matra[ch] }); }
+    else if(ch === S.virama){ if(last) last.v = ""; }
+    else if(S.indep[ch]){ U.push({ c:"", v:S.indep[ch] }); }
+    else if(S.carrier[ch]){ U.push({ c:"", v:S.carrier[ch], carrier:true }); }
+    else if(S.nasal.includes(ch)){ if(last) last.nasal = true; }
+    else if(S.gem && ch === S.gem){ gem = true; }
+    else if(ch === S.visarga){ if(last) last.post = "h"; }
+    else if(S.digits.includes(ch)){ U.push({ c:String(S.digits.indexOf(ch)), v:"" }); }
+    else if(S.skip.includes(ch)){ /* ignore */ }
+    else U.push({ c:ch, v:"" });
+  }
+  // schwa deletion, right to left: drop the silent "a" the way the word is actually sung
+  const n = U.length;
+  for(let i = n - 1; i >= 0; i--){
+    const u = U[i];
+    if(u.v !== "A" || !u.c) continue;
+    if(i === n - 1){ if(n > 1 && !u.nasal) u.v = ""; continue; }
+    const prev = U[i - 1], next = U[i + 1];
+    if(i > 0 && prev.v !== "" && !u.nasal && next?.c && next.v !== "") u.v = "";
+  }
+  // glide between vowels: kudi+e -> kudiye, pi+aar -> piyaar
+  for(let i = 1; i < n; i++){
+    const u = U[i], p = U[i - 1];
+    if(!u.c && !u.carrier && ["a","aa","e"].includes(u.v) && ["ee","i"].includes(p.v)){ p.v = "i"; u.c = "y"; }
+  }
+  let out = "";
+  U.forEach((u, i) => {
+    const isLast = i === n - 1;
+    let v = u.v === "A" ? "a" : u.v;
+    if(isLast && u.c){ if(v === "aa") v = "a"; else if(v === "ee") v = "i"; else if(v === "oo") v = "u"; }
+    if(u.gem && u.c) out += u.c[0];
+    out += u.c + v;
+    if(u.nasal){
+      const nx = U[i + 1]?.c || "";
+      if(isLast && u.c && (u.v === "oo" || u.v === "u")) {}    // mainu, tu
+      else if(isLast && u.v === "e") out = out.slice(0, -1) + "ein";   // mein
+      else out += /^[pbm]/.test(nx) ? "m" : "n";
+    }
+    if(u.post) out += u.post;
+  });
+  return out;
 }
-async function viaGoogle(texts, onEach){
-  const out = new Array(texts.length);
-  let i = 0;
+function romanize(line){
+  const S = SCRIPTS.guru.test.test(line) ? SCRIPTS.guru : SCRIPTS.deva.test.test(line) ? SCRIPTS.deva : null;
+  if(!S) return line;
+  const res = line.normalize("NFC").replace(DANDA, "").replace(/[ऀ-ॿ਀-੿]+/g, w => romanWord(w, S)).replace(/\s+/g, " ").trim();
+  return res.charAt(0).toUpperCase() + res.slice(1);
+}
+const scriptLang = t => /[਀-੿]/.test(t) ? "pa" : /[ऀ-ॿ]/.test(t) ? "hi" : /[؀-ۿ]/.test(t) ? "ur" : "es";
+
+/* Meaning engines, tried in order. The first one that answers is used for the rest of the song. */
+const enc = encodeURIComponent;
+function httpErr(r){ return new Error("HTTP " + r.status); }
+function firstString(d){ if(typeof d === "string") return d; if(Array.isArray(d)) for(const x of d){ const s = firstString(x); if(s) return s; } return ""; }
+const ENGINES = {
+  "Google": async t => {
+    const r = await fetch("https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=" + enc(t));
+    if(!r.ok) throw httpErr(r);
+    const d = await r.json();
+    return (d?.[0] || []).map(s => s?.[0] || "").join("").trim();
+  },
+  "Google (alt)": async t => {
+    const r = await fetch("https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl=en&q=" + enc(t));
+    if(!r.ok) throw httpErr(r);
+    return firstString(await r.json()).trim();
+  },
+  "MyMemory": async t => {
+    const r = await fetch("https://api.mymemory.translated.net/get?langpair=" + scriptLang(t) + "|en&q=" + enc(t));
+    if(!r.ok) throw httpErr(r);
+    const d = await r.json();
+    if(+d.responseStatus !== 200) throw new Error(d.responseDetails || "refused");
+    return String(d.responseData?.translatedText || "").trim();
+  }
+};
+const engineState = {};   // name -> "ok" | "dead"
+async function meaningOf(text){
+  let lastErr = null;
+  for(const name of Object.keys(ENGINES)){
+    if(engineState[name] === "dead") continue;
+    try{
+      const m = await ENGINES[name](text);
+      if(!m) throw new Error("empty answer");
+      engineState[name] = "ok"; LS.set("engineUsed", name);
+      return m;
+    }catch(e){
+      lastErr = new Error(name + ": " + (e.message === "Load failed" || e.message === "Failed to fetch" ? "blocked by the browser" : e.message));
+      if(engineState[name] !== "ok") engineState[name] = "dead";     // never worked: skip it from now on
+      LS.set("engineErr", lastErr.message);
+    }
+  }
+  throw lastErr || new Error("no translator available");
+}
+async function viaFree(texts, onEach){
+  let i = 0, done = 0, okCount = 0;
   async function worker(){
     while(i < texts.length){
       const k = i++;
-      try{ out[k] = await gtx(texts[k]); }
-      catch{ out[k] = { r:texts[k], m:"" }; }
-      onEach?.(k, out[k]);
+      let m = "";
+      try{ m = await meaningOf(texts[k]); okCount++; }catch{}
+      done++;
+      onEach(k, m, done, okCount);
     }
   }
-  await Promise.all([worker(), worker(), worker(), worker()]);
-  return out;
+  await Promise.all([worker(), worker(), worker()]);
+  return okCount;
 }
 
 /* ---------- track loading ---------- */
@@ -347,8 +465,8 @@ async function loadTrack(item){
   setChip("Finding lyrics");
   showMsg("Finding lyrics", meta.title);
 
-  const engine = LS.get("akey") ? "claude" : "google";
-  const cacheKey = "song:" + item.id + ":" + engine;
+  const useClaude = !!LS.get("akey");
+  const cacheKey = "v2:song:" + item.id + ":" + (useClaude ? "claude" : "free");
   let cached = null;
   try{ cached = JSON.parse(LS.get(cacheKey) || "null"); }catch{}
 
@@ -361,29 +479,60 @@ async function loadTrack(item){
     if(found.instrumental){ setChip("Instrumental"); showMsg("Instrumental", "Nothing to sing here. Enjoy it."); return; }
     if(found.syncedLyrics){ synced = true; lines = parseLRC(found.syncedLyrics).map(l => ({ t:l.t, text:l.text })); }
     else{ synced = false; lines = found.plainLyrics.split(/\r?\n/).map(text => ({ t:null, text:text.trim() })); }
+    lines.forEach(l => { if(l.text) l.r = romanize(l.text); });   // instant, offline
   }
   S.lines = lines; S.synced = synced;
   render();
-  setChip(synced ? "Live" : "Unsynced", synced ? "live" : "");
+  const liveChip = () => setChip(synced ? "Live" : "Unsynced", synced ? "live" : "");
+  liveChip();
   if(cached) return;
 
-  // translate each distinct line once (choruses repeat)
+  // meanings: each distinct line once (choruses repeat)
   const uniq = [...new Set(lines.map(l => l.text).filter(Boolean))];
-  const apply = (text, res) => {
-    lines.forEach((l, i) => { if(l.text === text){ l.r = res.r; l.m = res.m; paintLine(i); } });
-  };
-  try{
-    let res;
-    if(engine === "claude"){
-      try{ res = await viaClaude(uniq, meta); }
-      catch(e){ console.warn(e); toastChip("Claude failed, using Google"); res = await viaGoogle(uniq, (k, v) => gen === S.gen && apply(uniq[k], v)); }
-    } else {
-      res = await viaGoogle(uniq, (k, v) => gen === S.gen && apply(uniq[k], v));
-    }
+  const apply = (text, r, m) => {
     if(gen !== S.gen) return;
-    uniq.forEach((t, k) => apply(t, res[k]));
-    LS.set(cacheKey, JSON.stringify({ lines, synced }));
-  }catch(e){ console.warn(e); }
+    lines.forEach((l, i) => { if(l.text === text){ if(r) l.r = r; l.m = m; paintLine(i); } });
+  };
+  let good = 0;
+  if(useClaude){
+    setChip("Meanings…");
+    try{
+      const res = await viaClaude(uniq, meta);
+      if(gen !== S.gen) return;
+      uniq.forEach((t, k) => apply(t, res[k].r, res[k].m));
+      good = uniq.length;
+    }catch(e){ LS.set("engineErr", e.message); console.warn(e); }
+  }
+  if(!good){
+    good = await viaFree(uniq, (k, m, done) => {
+      apply(uniq[k], null, m);
+      if(gen === S.gen) setChip("Meanings " + done + "/" + uniq.length);
+    });
+  }
+  if(gen !== S.gen) return;
+  if(!good){
+    setChip("No meanings", "err");
+    lines.forEach((l, i) => { if(l.text){ l.m = "Couldn't get a meaning. Open ⚙︎ and tap Test translators."; paintLine(i); } });
+    return;                                 // don't cache a failed run
+  }
+  liveChip();
+  if(good / uniq.length >= 0.7) LS.set(cacheKey, JSON.stringify({ lines, synced }));
+}
+
+/* Settings: check which translators this phone can reach */
+async function testEngines(){
+  const sample = "ਮੈਨੂ ਮੇਰੇ ਯਾਰ ਮੋੜ ਦੋ", out = [];
+  const box = $("diag"); box.textContent = "Testing…";
+  out.push("Romanized locally: " + romanize(sample));
+  if(LS.get("akey")){
+    try{ const r = await viaClaude([sample], { title:"test", artist:"test" }); out.push("✓ Claude: " + r[0].m); }
+    catch(e){ out.push("✗ Claude: " + e.message); }
+  }
+  for(const [name, fn] of Object.entries(ENGINES)){
+    try{ out.push("✓ " + name + ": " + await fn(sample)); }
+    catch(e){ out.push("✗ " + name + ": " + (e.message === "Load failed" || e.message === "Failed to fetch" ? "blocked by the browser" : e.message)); }
+  }
+  box.textContent = out.join("\n");
 }
 
 /* ---------- rendering ---------- */
@@ -417,7 +566,7 @@ function paintLine(i){
   if(!l.text){ r.textContent = "♪"; o.textContent = ""; m.textContent = ""; m.hidden = true; return; }
   r.textContent = l.r || l.text;
   o.textContent = l.r && l.r !== l.text ? l.text : "";
-  m.textContent = l.m && l.m.toLowerCase() !== (l.r || l.text).toLowerCase() ? l.m : (l.m === undefined ? "" : " ");
+  m.textContent = l.m === undefined ? "" : (l.m && l.m.toLowerCase() !== (l.r || l.text).toLowerCase() ? l.m : "\u00a0");
   m.hidden = false;
 }
 function currentIndex(){
@@ -524,14 +673,16 @@ $("connect").onclick = () => {
 };
 $("saveOnly").onclick = () => { saveFields(); $("setup").hidden = true; S.id = null; poll(); };
 $("logout").onclick = () => { ["at","rt","exp"].forEach(LS.del); openSetup(); };
+$("testBtn").onclick = testEngines;
 $("clearCache").onclick = e => {
-  try{ Object.keys(localStorage).filter(k => k.startsWith("song:")).forEach(k => localStorage.removeItem(k)); }catch{}
+  try{ Object.keys(localStorage).filter(k => /^(v2:)?song:/.test(k)).forEach(k => localStorage.removeItem(k)); }catch{}
   e.currentTarget.textContent = "Cleared"; S.id = null;
 };
 
 /* ---------- boot ---------- */
 (async () => {
   showOffset();
+  try{ Object.keys(localStorage).filter(k => k.startsWith("song:")).forEach(k => localStorage.removeItem(k)); }catch{}  // old cache format
   try{ await handleCallback(); }
   catch(e){ openSetup(); $("setupErr").textContent = e.message; return; }
   if(!LS.get("cid") || !LS.get("rt")){ openSetup(); return; }
