@@ -71,7 +71,11 @@ button{cursor:pointer}
 .sheet ol{padding-left:1.2em;margin:0}
 .sheet li{margin:6px 0}
 label{display:block;font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin:16px 0 6px}
-input[type=text],input[type=password]{width:100%;background:var(--ink-2);border:1px solid var(--line);border-radius:10px;padding:12px;font-family:ui-monospace,Menlo,monospace;font-size:.85rem}
+.masked:not(:focus){-webkit-text-security:disc}
+#cidHint{margin-top:6px;min-height:1.2em}
+#cidHint.good{color:var(--ok)}
+#cidHint.bad{color:var(--warn)}
+input[type=text]{width:100%;min-width:0;background:var(--ink-2);border:1px solid var(--line);border-radius:10px;padding:12px;font-family:ui-monospace,Menlo,monospace;font-size:.85rem}
 .copy{display:flex;gap:8px;align-items:stretch}
 .copy code{flex:1;min-width:0;background:var(--ink-2);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:.8rem;overflow-wrap:anywhere;user-select:all}
 .btn{background:var(--saffron);color:#1a1205;border:0;border-radius:12px;padding:14px 18px;font-weight:700;width:100%;margin-top:22px}
@@ -118,12 +122,16 @@ input[type=text],input[type=password]{width:100%;background:var(--ink-2);border:
   </ol>
 
   <label for="cid">Spotify Client ID</label>
-  <input type="text" id="cid" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="32 letters and numbers">
+  <div class="copy">
+    <input type="text" id="cid" name="spotify-app-id" inputmode="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" placeholder="32 letters and numbers">
+    <button class="pill" id="pasteCid" type="button">Paste</button>
+  </div>
+  <div class="note" id="cidHint" aria-live="polite"></div>
 
   <h2>Meanings engine</h2>
   <p class="note">Leave this empty to use free Google Translate. For better meanings of slang and idioms (Haryanvi, Punjabi), paste an Anthropic API key. Each new song costs a fraction of a cent, and songs are cached.</p>
   <label for="akey">Anthropic API key (optional)</label>
-  <input type="password" id="akey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-ant-…">
+  <input type="text" id="akey" class="masked" name="claude-api-key" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" placeholder="sk-ant-…">
 
   <button class="btn" id="connect">Connect Spotify</button>
   <button class="btn ghost" id="saveOnly" hidden>Save and close</button>
@@ -459,17 +467,51 @@ function openSetup(){
   $("setup").hidden = false;
   $("redir").textContent = REDIRECT;
   $("cid").value = LS.get("cid") || "";
+  checkCid();
   $("akey").value = LS.get("akey") || "";
   const authed = !!LS.get("rt");
   $("connect").textContent = authed ? "Reconnect Spotify" : "Connect Spotify";
   $("saveOnly").hidden = $("logout").hidden = $("clearCache").hidden = !authed;
 }
+// Pull the 32-character ID out of whatever got pasted (labels, spaces, invisible characters, line breaks).
+function extractCid(raw){
+  const text = String(raw || "").replace(/[​-‍⁠﻿]/g, "");
+  const m = text.match(/(?<![0-9a-z])[0-9a-f]{32}(?![0-9a-z])/i);   // a standalone 32-char token
+  if(m) return m[0].toLowerCase();
+  const flat = text.replace(/\s/g, "");                              // ID split by stray spaces
+  return /^[0-9a-f]{32}$/i.test(flat) ? flat.toLowerCase() : "";
+}
+function checkCid(){
+  const raw = $("cid").value, id = extractCid(raw), hint = $("cidHint");
+  if(id){
+    if(raw !== id) $("cid").value = id;
+    LS.set("cid", id);
+    hint.textContent = "✓ Looks right"; hint.className = "note good";
+    $("setupErr").textContent = "";
+  } else if(raw.trim()){
+    const shown = raw.trim().replace(/[​-‍⁠﻿]/g, "·");
+    hint.textContent = "Got " + raw.trim().length + " characters: \"" + shown.slice(0, 40) + (shown.length > 40 ? "…" : "") + "\". A Client ID is exactly 32 characters, digits and a–f only.";
+    hint.className = "note bad";
+  } else { hint.textContent = ""; hint.className = "note"; }
+  return id;
+}
 function saveFields(){
-  const cid = $("cid").value.trim(), akey = $("akey").value.trim();
-  if(cid) LS.set("cid", cid);
+  const cid = checkCid(), akey = $("akey").value.trim();
   if(akey) LS.set("akey", akey); else LS.del("akey");
   return cid;
 }
+["input", "change", "blur"].forEach(ev => $("cid").addEventListener(ev, checkCid));
+$("cid").addEventListener("paste", e => {
+  const text = e.clipboardData?.getData("text");
+  if(text == null) return;            // let the browser paste normally
+  e.preventDefault();
+  $("cid").value = text;
+  checkCid();
+});
+$("pasteCid").onclick = async () => {
+  try{ $("cid").value = await navigator.clipboard.readText(); checkCid(); }
+  catch{ $("cid").focus(); $("cidHint").textContent = "Long-press the box and choose Paste."; $("cidHint").className = "note"; }
+};
 $("gear").onclick = openSetup;
 $("copyRedir").onclick = async e => {
   try{ await navigator.clipboard.writeText(REDIRECT); e.currentTarget.textContent = "Copied"; }
@@ -477,7 +519,7 @@ $("copyRedir").onclick = async e => {
 };
 $("connect").onclick = () => {
   const cid = saveFields();
-  if(!/^[0-9a-f]{32}$/i.test(cid)){ $("setupErr").textContent = "That Client ID doesn't look right. It's 32 letters and numbers, shown on your Spotify app's page."; return; }
+  if(!cid){ $("setupErr").textContent = "Paste the Client ID from your Spotify app's Basic Information page (not the Client secret)."; $("cid").focus(); return; }
   login();
 };
 $("saveOnly").onclick = () => { saveFields(); $("setup").hidden = true; S.id = null; poll(); };
