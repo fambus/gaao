@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#15121f">
+<title>Gaao</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap">
+<style>
+/* Layout: one-screen karaoke stage. Scrolling lyric column, current line lit in saffron, meaning under each line. */
+:root{
+  --ink:#15121f; --ink-2:#1e1a2c; --line:#2d2840;
+  --fg:#f3efe6; --dim:#6f6889; --meaning:#b8b0d8;
+  --saffron:#ffb547; --ok:#7ee0a8; --warn:#ff8a6b;
+  --f-sing:"Bricolage Grotesque",ui-rounded,"SF Pro Rounded",system-ui,sans-serif;
+  --f-read:"Atkinson Hyperlegible",system-ui,-apple-system,sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--ink);color:var(--fg);font:16px/1.4 var(--f-read);-webkit-font-smoothing:antialiased;
+  padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px);display:flex;flex-direction:column;overflow:hidden}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--saffron);outline-offset:2px}
+[hidden]{display:none!important}
+
+/* top bar */
+.bar{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);flex:none}
+.art{width:44px;height:44px;border-radius:6px;background:var(--ink-2);flex:none;object-fit:cover}
+.meta{min-width:0;flex:1}
+.title{font:700 1rem/1.2 var(--f-sing);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.artist{color:var(--dim);font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip{font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:99px;border:1px solid var(--line);color:var(--dim);flex:none}
+.chip.live{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent)}
+.chip.err{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
+.icon{background:none;border:0;padding:8px;margin:-8px;color:var(--dim);font-size:1.3rem;line-height:1;flex:none}
+
+/* stage */
+.stage{flex:1;overflow-y:auto;padding:38vh 20px;scroll-behavior:smooth;-webkit-overflow-scrolling:touch;
+  mask-image:linear-gradient(transparent,#000 18%,#000 72%,transparent)}
+.ln{padding:10px 0;transition:opacity .25s,transform .25s;opacity:.38;transform-origin:left center}
+.ln .r{font:700 1.45rem/1.2 var(--f-sing);letter-spacing:-.01em;text-wrap:balance}
+.ln .o{font-size:.85rem;color:var(--dim);margin-top:2px}
+.ln .m{font-size:.95rem;color:var(--meaning);margin-top:4px;font-style:italic}
+.ln .m:empty::after{content:"…";color:var(--dim)}
+.ln.gap .r{color:var(--dim);font-size:1.1rem}
+.ln.on{opacity:1}
+.ln.on .r{color:var(--saffron);font-size:1.9rem}
+.ln.on .m{color:var(--fg);font-size:1.05rem}
+.stage.unsynced{padding-top:24px}
+.stage.unsynced .ln{opacity:.9}
+.stage:not(.orig) .o{display:none}
+.msg{color:var(--dim);text-align:center;max-width:30ch;margin:0 auto;font-size:1rem}
+.msg strong{color:var(--fg);display:block;font:700 1.2rem var(--f-sing);margin-bottom:6px}
+
+/* bottom controls */
+.ctl{display:flex;align-items:center;gap:8px;padding:10px 16px;border-top:1px solid var(--line);flex:none;flex-wrap:wrap}
+.pill{background:var(--ink-2);border:1px solid var(--line);border-radius:99px;padding:7px 12px;font-size:.85rem}
+.pill[aria-pressed="true"]{border-color:var(--saffron);color:var(--saffron)}
+.off{font-variant-numeric:tabular-nums;font-size:.85rem;color:var(--dim);min-width:4.5ch;text-align:center}
+.grow{flex:1}
+
+/* setup + settings sheet */
+.sheet{position:fixed;inset:0;background:var(--ink);overflow-y:auto;padding:calc(env(safe-area-inset-top,0px) + 20px) 20px calc(env(safe-area-inset-bottom,0px) + 28px);z-index:5}
+.sheet h1{font:700 2.6rem/1 var(--f-sing);margin:8px 0 4px;color:var(--saffron);letter-spacing:-.02em}
+.sheet h2{font:700 1.1rem var(--f-sing);margin:26px 0 8px}
+.sheet p,.sheet li{color:var(--meaning);max-width:62ch}
+.sheet ol{padding-left:1.2em;margin:0}
+.sheet li{margin:6px 0}
+label{display:block;font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin:16px 0 6px}
+input[type=text],input[type=password]{width:100%;background:var(--ink-2);border:1px solid var(--line);border-radius:10px;padding:12px;font-family:ui-monospace,Menlo,monospace;font-size:.85rem}
+.copy{display:flex;gap:8px;align-items:stretch}
+.copy code{flex:1;min-width:0;background:var(--ink-2);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:.8rem;overflow-wrap:anywhere;user-select:all}
+.btn{background:var(--saffron);color:#1a1205;border:0;border-radius:12px;padding:14px 18px;font-weight:700;width:100%;margin-top:22px}
+.btn.ghost{background:var(--ink-2);color:var(--fg);border:1px solid var(--line)}
+.note{font-size:.85rem;color:var(--dim)}
+.err-box{color:var(--warn);font-size:.9rem;margin-top:12px;white-space:pre-wrap}
+@media (prefers-reduced-motion:reduce){.stage{scroll-behavior:auto}.ln{transition:none}}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <img class="art" id="art" alt="">
+  <div class="meta"><div class="title" id="title">Gaao</div><div class="artist" id="artist">Waiting for Spotify</div></div>
+  <span class="chip" id="chip">Idle</span>
+  <button class="icon" id="gear" aria-label="Settings">⚙︎</button>
+</header>
+
+<main class="stage" id="stage"><div class="msg" id="msg"><strong>Play something on Spotify</strong>Lyrics in English letters with a one-line meaning will show up here, in time with the song.</div></main>
+
+<footer class="ctl">
+  <button class="pill" id="origBtn" aria-pressed="false">Original script</button>
+  <span class="grow"></span>
+  <button class="pill" id="minus" aria-label="Show lyrics earlier">−</button>
+  <span class="off" id="offv">0.0s</span>
+  <button class="pill" id="plus" aria-label="Show lyrics later">+</button>
+  <button class="pill" id="wakeBtn" aria-pressed="false">Screen on</button>
+</footer>
+
+<section class="sheet" id="setup" hidden>
+  <h1>Gaao</h1>
+  <p>Sing along to songs in any language. Lyrics in English letters, with what each line means.</p>
+
+  <h2>Connect Spotify (one time, 5 minutes)</h2>
+  <ol>
+    <li>Open <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener" style="color:var(--saffron)">developer.spotify.com/dashboard</a> and log in.</li>
+    <li>Tap <b>Create app</b>. Any name and description. Under APIs, tick <b>Web API</b>.</li>
+    <li>For <b>Redirect URI</b>, paste exactly this:</li>
+  </ol>
+  <div class="copy"><code id="redir"></code><button class="pill" id="copyRedir">Copy</button></div>
+  <ol start="4">
+    <li>Save, then copy the app's <b>Client ID</b> into the box below.</li>
+    <li>If Spotify later says you're not allowed, open the app's <b>User Management</b> and add your own Spotify email.</li>
+  </ol>
+
+  <label for="cid">Spotify Client ID</label>
+  <input type="text" id="cid" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="32 letters and numbers">
+
+  <h2>Meanings engine</h2>
+  <p class="note">Leave this empty to use free Google Translate. For better meanings of slang and idioms (Haryanvi, Punjabi), paste an Anthropic API key. Each new song costs a fraction of a cent, and songs are cached.</p>
+  <label for="akey">Anthropic API key (optional)</label>
+  <input type="password" id="akey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-ant-…">
+
+  <button class="btn" id="connect">Connect Spotify</button>
+  <button class="btn ghost" id="saveOnly" hidden>Save and close</button>
+  <button class="btn ghost" id="clearCache" hidden>Clear saved lyrics</button>
+  <button class="btn ghost" id="logout" hidden>Log out of Spotify</button>
+  <div class="err-box" id="setupErr"></div>
+  <p class="note" style="margin-top:22px">Everything stays on this phone. Keys and lyrics are saved only in this browser.</p>
+</section>
+
+<script>
+"use strict";
+/* ---------- storage ---------- */
+const mem = {};
+const LS = {
+  get(k){ try{ const v = localStorage.getItem(k); return v ?? mem[k] ?? null; }catch{ return mem[k] ?? null; } },
+  set(k,v){ mem[k]=v; try{ localStorage.setItem(k,v); }catch{} },
+  del(k){ delete mem[k]; try{ localStorage.removeItem(k); }catch{} }
+};
+const $ = id => document.getElementById(id);
+const REDIRECT = location.origin + location.pathname;
+const SCOPES = "user-read-currently-playing user-read-playback-state";
+const CLAUDE_MODEL = "claude-haiku-5-5";
+const LEAD_MS = 250; // show each line a touch early so you can start singing
+
+/* ---------- Spotify auth (PKCE, no server needed) ---------- */
+function rand(n){ const a = new Uint8Array(n); crypto.getRandomValues(a); return Array.from(a, b => b.toString(16).padStart(2,"0")).join(""); }
+async function challenge(v){
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v));
+  return btoa(String.fromCharCode(...new Uint8Array(d))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+}
+async function login(){
+  const cid = LS.get("cid");
+  const v = rand(48), s = rand(8);
+  LS.set("pkce_v", v); LS.set("pkce_s", s);
+  const p = new URLSearchParams({ client_id:cid, response_type:"code", redirect_uri:REDIRECT, scope:SCOPES,
+    code_challenge_method:"S256", code_challenge: await challenge(v), state:s });
+  location.href = "https://accounts.spotify.com/authorize?" + p;
+}
+function saveTokens(j){
+  if(!j.access_token) throw new Error(j.error_description || j.error || "Spotify did not return a token");
+  LS.set("at", j.access_token);
+  LS.set("exp", String(Date.now() + (j.expires_in - 60) * 1000));
+  if(j.refresh_token) LS.set("rt", j.refresh_token);
+}
+async function tokenRequest(body){
+  const r = await fetch("https://accounts.spotify.com/api/token", { method:"POST",
+    headers:{ "Content-Type":"application/x-www-form-urlencoded" }, body:new URLSearchParams(body) });
+  const j = await r.json().catch(() => ({}));
+  if(!r.ok){ const e = new Error(j.error_description || j.error || ("Spotify login failed (" + r.status + ")")); e.status = r.status; throw e; }
+  return j;
+}
+async function handleCallback(){
+  const q = new URLSearchParams(location.search);
+  if(!q.has("code") && !q.has("error")) return;
+  history.replaceState(null, "", REDIRECT);
+  if(q.get("error")) throw new Error("Spotify said: " + q.get("error") + ". Check the Redirect URI and User Management in your Spotify app.");
+  if(q.get("state") !== LS.get("pkce_s")) throw new Error("Login check failed. Tap Connect Spotify again.");
+  saveTokens(await tokenRequest({ grant_type:"authorization_code", code:q.get("code"), redirect_uri:REDIRECT,
+    client_id:LS.get("cid"), code_verifier:LS.get("pkce_v") }));
+  LS.del("pkce_v"); LS.del("pkce_s");
+}
+let refreshing = null;
+async function token(){
+  if(LS.get("at") && Date.now() < +LS.get("exp")) return LS.get("at");
+  if(!LS.get("rt")) throw Object.assign(new Error("Not logged in"), { auth:true });
+  refreshing ??= tokenRequest({ grant_type:"refresh_token", refresh_token:LS.get("rt"), client_id:LS.get("cid") })
+    .then(saveTokens)
+    .catch(e => { if(e.status === 400){ LS.del("at"); LS.del("rt"); e.auth = true; } throw e; })
+    .finally(() => { refreshing = null; });
+  await refreshing;
+  return LS.get("at");
+}
+
+/* ---------- playback state ---------- */
+const S = { id:null, progress:0, at:0, playing:false, lines:[], synced:false, idx:-1, gen:0 };
+let pollTimer = null, backoffUntil = 0;
+
+function posMs(){
+  const off = +(LS.get("offset") || 0);
+  const p = S.playing ? S.progress + (performance.now() - S.at) : S.progress;
+  return p + LEAD_MS - off * 1000;
+}
+
+async function poll(){
+  clearTimeout(pollTimer);
+  let next = document.hidden ? 15000 : 2500;
+  try{
+    if(Date.now() < backoffUntil){ next = backoffUntil - Date.now(); return; }
+    const t = await token();
+    const t0 = performance.now();
+    const r = await fetch("https://api.spotify.com/v1/me/player/currently-playing", { headers:{ Authorization:"Bearer " + t } });
+    const t1 = performance.now();
+    if(r.status === 204){ setChip("Idle"); S.playing = false; if(!S.id) showMsg("Play something on Spotify", "Start a song in the Spotify app, then come back here."); return; }
+    if(r.status === 401){ LS.del("at"); next = 500; return; }
+    if(r.status === 429){ backoffUntil = Date.now() + 15000; setChip("Slow down", "err"); return; }
+    if(r.status === 403){ setChip("Blocked", "err"); showMsg("Spotify refused access", "Open your app in the Spotify dashboard, go to User Management, and add your own Spotify email. Your Spotify account must be Premium."); next = 20000; return; }
+    if(!r.ok){ setChip("Error " + r.status, "err"); return; }
+    const j = await r.json();
+    S.progress = j.progress_ms || 0;
+    S.at = t0 + (t1 - t0) / 2;
+    S.playing = !!j.is_playing;
+    const item = j.item;
+    if(!item){ setChip("Idle"); return; }
+    if(item.id !== S.id) loadTrack(item);
+    else setChip(S.playing ? (S.synced ? "Live" : "Unsynced") : "Paused", S.playing && S.synced ? "live" : "");
+  }catch(e){
+    if(e.auth){ openSetup(); return; }
+    setChip("Offline", "err"); next = 5000;
+  }finally{
+    pollTimer = setTimeout(poll, next);
+  }
+}
+
+/* ---------- lyrics ---------- */
+function cleanTitle(s){
+  return s.replace(/\s*[\(\[][^\)\]]*[\)\]]/g, "").replace(/\s+-\s+.*$/, "").trim() || s;
+}
+async function lrclib(params){
+  const r = await fetch("https://lrclib.net/api/" + params, { headers:{ "Lrclib-Client":"Gaao web (personal)" } }).catch(() => null);
+  if(!r || !r.ok) return null;
+  return r.json().catch(() => null);
+}
+async function findLyrics(item){
+  const title = item.name, artist = (item.artists || [])[0]?.name || "", album = item.album?.name || "";
+  const dur = Math.round((item.duration_ms || 0) / 1000);
+  const exact = await lrclib("get?" + new URLSearchParams({ track_name:title, artist_name:artist, album_name:album, duration:dur }));
+  if(exact && (exact.syncedLyrics || exact.plainLyrics)) return exact;
+  const ct = cleanTitle(title);
+  const tries = [{ track_name:ct, artist_name:artist }, { q:ct + " " + artist }, { q:ct }];
+  for(const t of tries){
+    const arr = await lrclib("search?" + new URLSearchParams(t));
+    if(!Array.isArray(arr) || !arr.length) continue;
+    const scored = arr.filter(x => x.syncedLyrics || x.plainLyrics).map(x => ({ x, d:Math.abs((x.duration || 0) - dur) }));
+    const synced = scored.filter(s => s.x.syncedLyrics && s.d <= 6).sort((a,b) => a.d - b.d);
+    if(synced.length) return synced[0].x;
+    const plain = scored.sort((a,b) => a.d - b.d);
+    if(plain.length && plain[0].d <= 15) return plain[0].x;
+  }
+  return null;
+}
+function parseLRC(s){
+  const out = [];
+  for(const raw of s.split(/\r?\n/)){
+    const tags = [...raw.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
+    if(!tags.length) continue;
+    const text = raw.replace(/\[[^\]]*\]/g, "").trim();
+    for(const m of tags) out.push({ t:(+m[1] * 60 + +m[2]) * 1000, text });
+  }
+  return out.sort((a,b) => a.t - b.t);
+}
+
+/* ---------- romanize + meaning ---------- */
+const isLatin = s => /^[\p{Script=Latin}\p{N}\p{P}\p{S}\s]*$/u.test(s);
+const plainify = s => s.normalize("NFD").replace(/[̀-ͯ]/g, "").normalize("NFC");
+
+async function viaClaude(texts, meta){
+  const key = LS.get("akey");
+  const prompt =
+`Song: "${meta.title}" by ${meta.artist}.
+Below is a JSON array of lyric lines. Return a JSON array with exactly ${texts.length} objects, same order, each {"r": "...", "m": "..."}.
+- r: the line in plain English letters, spelled the way a casual Indian or English speaker would type it to sing along (for example "tenu", "kyun", "mainu"). No diacritics. If the line is already in Latin letters, copy it unchanged.
+- m: a short natural English meaning of the line in the context of the song, at most 12 words. Translate slang and idioms by what they mean, not word by word. If the line is already English, give a brief plain paraphrase or repeat it.
+Reply with the JSON array only.
+
+${JSON.stringify(texts)}`;
+  const r = await fetch("https://api.anthropic.com/v1/messages", { method:"POST",
+    headers:{ "content-type":"application/json", "x-api-key":key, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true" },
+    body:JSON.stringify({ model:CLAUDE_MODEL, max_tokens:8000, messages:[{ role:"user", content:prompt }] }) });
+  if(!r.ok) throw new Error("Claude API " + r.status + ": " + (await r.text()).slice(0, 160));
+  const j = await r.json();
+  const txt = (j.content || []).map(c => c.text || "").join("");
+  const arr = JSON.parse(txt.slice(txt.indexOf("["), txt.lastIndexOf("]") + 1));
+  if(!Array.isArray(arr) || arr.length !== texts.length) throw new Error("Claude returned " + (arr?.length ?? 0) + " lines for " + texts.length);
+  return arr.map((o, i) => ({ r: plainify(String(o.r || texts[i])), m: String(o.m || "") }));
+}
+
+async function gtx(text){
+  const u = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&dt=rm&q=" + encodeURIComponent(text);
+  const r = await fetch(u);
+  if(!r.ok) throw new Error("Translate " + r.status);
+  const d = await r.json();
+  let tr = "", rm = "";
+  for(const seg of d[0] || []){
+    if(seg[0] != null) tr += seg[0];
+    else if(seg[3]) rm += seg[3];
+  }
+  return { r: isLatin(text) || !rm ? text : plainify(rm), m: tr };
+}
+async function viaGoogle(texts, onEach){
+  const out = new Array(texts.length);
+  let i = 0;
+  async function worker(){
+    while(i < texts.length){
+      const k = i++;
+      try{ out[k] = await gtx(texts[k]); }
+      catch{ out[k] = { r:texts[k], m:"" }; }
+      onEach?.(k, out[k]);
+    }
+  }
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  return out;
+}
+
+/* ---------- track loading ---------- */
+async function loadTrack(item){
+  const gen = ++S.gen;
+  S.id = item.id; S.lines = []; S.idx = -1; S.synced = false;
+  const meta = { title:item.name, artist:(item.artists || []).map(a => a.name).join(", ") };
+  $("title").textContent = meta.title;
+  $("artist").textContent = meta.artist;
+  const img = item.album?.images?.slice(-1)[0]?.url || item.album?.images?.[0]?.url;
+  if(img) $("art").src = img; else $("art").removeAttribute("src");
+  setChip("Finding lyrics");
+  showMsg("Finding lyrics", meta.title);
+
+  const engine = LS.get("akey") ? "claude" : "google";
+  const cacheKey = "song:" + item.id + ":" + engine;
+  let cached = null;
+  try{ cached = JSON.parse(LS.get(cacheKey) || "null"); }catch{}
+
+  let lines, synced;
+  if(cached){ ({ lines, synced } = cached); }
+  else{
+    const found = await findLyrics(item);
+    if(gen !== S.gen) return;
+    if(!found){ setChip("No lyrics"); showMsg("No lyrics found", "LRCLIB doesn't have this song yet."); return; }
+    if(found.instrumental){ setChip("Instrumental"); showMsg("Instrumental", "Nothing to sing here. Enjoy it."); return; }
+    if(found.syncedLyrics){ synced = true; lines = parseLRC(found.syncedLyrics).map(l => ({ t:l.t, text:l.text })); }
+    else{ synced = false; lines = found.plainLyrics.split(/\r?\n/).map(text => ({ t:null, text:text.trim() })); }
+  }
+  S.lines = lines; S.synced = synced;
+  render();
+  setChip(synced ? "Live" : "Unsynced", synced ? "live" : "");
+  if(cached) return;
+
+  // translate each distinct line once (choruses repeat)
+  const uniq = [...new Set(lines.map(l => l.text).filter(Boolean))];
+  const apply = (text, res) => {
+    lines.forEach((l, i) => { if(l.text === text){ l.r = res.r; l.m = res.m; paintLine(i); } });
+  };
+  try{
+    let res;
+    if(engine === "claude"){
+      try{ res = await viaClaude(uniq, meta); }
+      catch(e){ console.warn(e); toastChip("Claude failed, using Google"); res = await viaGoogle(uniq, (k, v) => gen === S.gen && apply(uniq[k], v)); }
+    } else {
+      res = await viaGoogle(uniq, (k, v) => gen === S.gen && apply(uniq[k], v));
+    }
+    if(gen !== S.gen) return;
+    uniq.forEach((t, k) => apply(t, res[k]));
+    LS.set(cacheKey, JSON.stringify({ lines, synced }));
+  }catch(e){ console.warn(e); }
+}
+
+/* ---------- rendering ---------- */
+let userScrollUntil = 0;
+function showMsg(head, body){
+  const st = $("stage"); st.replaceChildren(); st.classList.remove("unsynced");
+  const d = document.createElement("div"); d.className = "msg";
+  const s = document.createElement("strong"); s.textContent = head;
+  d.append(s, document.createTextNode(body || ""));
+  st.append(d);
+}
+function render(){
+  const st = $("stage"); st.replaceChildren();
+  st.classList.toggle("unsynced", !S.synced);
+  S.lines.forEach((l, i) => {
+    const el = document.createElement("div");
+    el.className = "ln" + (l.text ? "" : " gap"); el.id = "ln" + i;
+    const r = document.createElement("div"); r.className = "r";
+    const o = document.createElement("div"); o.className = "o";
+    const m = document.createElement("div"); m.className = "m";
+    el.append(r, o, m); st.append(el);
+    paintLine(i);
+  });
+  S.idx = -1;
+  if(!S.synced) st.scrollTop = 0;
+}
+function paintLine(i){
+  const el = $("ln" + i); if(!el) return;
+  const l = S.lines[i];
+  const [r, o, m] = el.children;
+  if(!l.text){ r.textContent = "♪"; o.textContent = ""; m.textContent = ""; m.hidden = true; return; }
+  r.textContent = l.r || l.text;
+  o.textContent = l.r && l.r !== l.text ? l.text : "";
+  m.textContent = l.m && l.m.toLowerCase() !== (l.r || l.text).toLowerCase() ? l.m : (l.m === undefined ? "" : " ");
+  m.hidden = false;
+}
+function currentIndex(){
+  const p = posMs(), L = S.lines;
+  let lo = 0, hi = L.length - 1, ans = -1;
+  while(lo <= hi){ const mid = (lo + hi) >> 1; if(L[mid].t <= p){ ans = mid; lo = mid + 1; } else hi = mid - 1; }
+  return ans;
+}
+function tick(){
+  if(S.synced && S.lines.length){
+    const i = currentIndex();
+    if(i !== S.idx){
+      $("ln" + S.idx)?.classList.remove("on");
+      S.idx = i;
+      const el = $("ln" + i);
+      if(el){
+        el.classList.add("on");
+        if(Date.now() > userScrollUntil) el.scrollIntoView({ block:"center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      }
+    }
+  }
+  requestAnimationFrame(tick);
+}
+function setChip(text, cls = ""){ const c = $("chip"); c.textContent = text; c.className = "chip" + (cls ? " " + cls : ""); }
+function toastChip(text){ setChip(text, "err"); }
+
+/* ---------- controls ---------- */
+function showOffset(){ const v = +(LS.get("offset") || 0); $("offv").textContent = (v > 0 ? "+" : "") + v.toFixed(1) + "s"; }
+function nudge(d){ const v = Math.round((+(LS.get("offset") || 0) + d) * 10) / 10; LS.set("offset", String(v)); showOffset(); S.idx = -2; }
+$("minus").onclick = () => nudge(-0.5);
+$("plus").onclick = () => nudge(0.5);
+$("origBtn").onclick = e => { const on = $("stage").classList.toggle("orig"); e.currentTarget.setAttribute("aria-pressed", on); };
+["touchstart", "wheel"].forEach(ev => $("stage").addEventListener(ev, () => { userScrollUntil = Date.now() + 4000; }, { passive:true }));
+
+let wake = null, wantWake = false;
+async function getWake(){ try{ wake = await navigator.wakeLock?.request("screen"); }catch{ wake = null; } }
+$("wakeBtn").onclick = async e => {
+  wantWake = !wantWake; e.currentTarget.setAttribute("aria-pressed", wantWake);
+  if(wantWake) await getWake(); else { try{ await wake?.release(); }catch{} wake = null; }
+};
+document.addEventListener("visibilitychange", () => {
+  if(!document.hidden){ if(wantWake) getWake(); poll(); }
+});
+
+/* ---------- setup sheet ---------- */
+function openSetup(){
+  $("setup").hidden = false;
+  $("redir").textContent = REDIRECT;
+  $("cid").value = LS.get("cid") || "";
+  $("akey").value = LS.get("akey") || "";
+  const authed = !!LS.get("rt");
+  $("connect").textContent = authed ? "Reconnect Spotify" : "Connect Spotify";
+  $("saveOnly").hidden = $("logout").hidden = $("clearCache").hidden = !authed;
+}
+function saveFields(){
+  const cid = $("cid").value.trim(), akey = $("akey").value.trim();
+  if(cid) LS.set("cid", cid);
+  if(akey) LS.set("akey", akey); else LS.del("akey");
+  return cid;
+}
+$("gear").onclick = openSetup;
+$("copyRedir").onclick = async e => {
+  try{ await navigator.clipboard.writeText(REDIRECT); e.currentTarget.textContent = "Copied"; }
+  catch{ const r = document.createRange(); r.selectNodeContents($("redir")); getSelection().removeAllRanges(); getSelection().addRange(r); }
+};
+$("connect").onclick = () => {
+  const cid = saveFields();
+  if(!/^[0-9a-f]{32}$/i.test(cid)){ $("setupErr").textContent = "That Client ID doesn't look right. It's 32 letters and numbers, shown on your Spotify app's page."; return; }
+  login();
+};
+$("saveOnly").onclick = () => { saveFields(); $("setup").hidden = true; S.id = null; poll(); };
+$("logout").onclick = () => { ["at","rt","exp"].forEach(LS.del); openSetup(); };
+$("clearCache").onclick = e => {
+  try{ Object.keys(localStorage).filter(k => k.startsWith("song:")).forEach(k => localStorage.removeItem(k)); }catch{}
+  e.currentTarget.textContent = "Cleared"; S.id = null;
+};
+
+/* ---------- boot ---------- */
+(async () => {
+  showOffset();
+  try{ await handleCallback(); }
+  catch(e){ openSetup(); $("setupErr").textContent = e.message; return; }
+  if(!LS.get("cid") || !LS.get("rt")){ openSetup(); return; }
+  requestAnimationFrame(tick);
+  poll();
+})();
+</script>
+</body>
+</html>
