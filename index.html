@@ -194,6 +194,7 @@ pre.note{white-space:pre-wrap;font-family:inherit;margin-top:12px}
     <label class="toggle" style="margin-top:12px"><input type="checkbox" id="origChk"> Show the original script under each line</label>
 
     <button class="btn ghost" id="testBtn">Test connections</button>
+    <button class="btn ghost" id="micBtn">Test microphone</button>
     <pre class="note" id="diag"></pre>
     <button class="btn ghost" id="clearCache">Clear saved lyrics</button>
     <p class="note" style="margin-top:22px">Your Spotify login and settings stay on this phone.</p>
@@ -414,6 +415,44 @@ async function recordClip(stream, ms){
   return { blob: wavBlob(downsample(all, ctx.sampleRate, 16000), 16000), startedAt: startedAt ?? performance.now() - ms,
            rms: count ? Math.sqrt(sumSq / count) : 0, samples: total };
 }
+// iPhone Safari records reliably with MediaRecorder (AAC in .m4a); Web Audio capture can come back silent there.
+function pickRecorderType(){
+  if(!window.MediaRecorder) return null;
+  for(const t of ["audio/mp4", "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"])
+    try{ if(MediaRecorder.isTypeSupported(t)) return t; }catch{}
+  return "";
+}
+function recordWithRecorder(stream, ms, type, onTick){
+  return new Promise((resolve, reject) => {
+    let rec;
+    try{ rec = type ? new MediaRecorder(stream, { mimeType:type }) : new MediaRecorder(stream); }
+    catch(e){ reject(e); return; }
+    const parts = []; let startedAt = null, timer = null, tickT = null;
+    rec.ondataavailable = e => { if(e.data && e.data.size) parts.push(e.data); };
+    rec.onerror = e => { clearTimeout(timer); clearInterval(tickT); reject(e.error || new Error("Recorder error")); };
+    rec.onstart = () => {
+      startedAt = performance.now();
+      let left = Math.round(ms / 1000); onTick?.(left);
+      tickT = setInterval(() => onTick?.(--left), 1000);
+      timer = setTimeout(() => { try{ rec.stop(); }catch{} }, ms);
+    };
+    rec.onstop = () => {
+      clearInterval(tickT);
+      const mime = (rec.mimeType || type || "audio/mp4").split(";")[0];
+      const blob = new Blob(parts, { type:mime });
+      const ext = mime.includes("mp4") ? "m4a" : mime.includes("webm") ? "webm" : mime.includes("ogg") ? "ogg" : "audio";
+      resolve({ blob, name:"clip." + ext, startedAt: startedAt ?? performance.now() - ms, bytes: blob.size });
+    };
+    rec.start(1000);
+  });
+}
+async function captureClip(stream, ms, onTick){
+  const type = pickRecorderType();
+  if(type !== null) return recordWithRecorder(stream, ms, type, onTick);
+  unlockAudio();
+  const c = await recordClip(stream, ms);
+  return { blob:c.blob, name:"clip.wav", startedAt:c.startedAt, bytes:c.blob.size };
+}
 function downsample(buf, from, to){
   if(from <= to) return buf;
   const ratio = from / to, len = Math.floor(buf.length / ratio), out = new Float32Array(len);
@@ -449,13 +488,17 @@ function listenErrorText(e){
   return [e.ui || "Couldn't listen", e.message];
 }
 
+function listenStop(head, body){ setChip(head, "err"); if(S.lines.length) toast(body); else showMsg(head, body); }
 async function listen(auto = false){
   if(listening) return;
-  unlockAudio();
+  if(!window.MediaRecorder) unlockAudio();   // old browsers only: Web Audio must start inside the tap
   if(!LS.get("invite")){
-    showMsg("Listening needs an invite link", "Open Gaao from the link someone shared with you. That switches on listening and Claude meanings.");
+    listenStop("No invite", "Open Gaao from your invite link once on this phone. That switches on listening and Claude meanings.");
     return;
   }
+  if(!B.ok) await checkBackend();
+  if(B.ok && B.invite === false){ listenStop("Invite not valid", "Ask for a fresh Gaao link and open it on this phone."); return; }
+  if(B.ok && B.listen === false){ listenStop("Listen is off", "The recognition key hasn't been added to Gaao's server yet. Once it is, Listen works straight away."); return; }
   setMode("listen");
   listening = true; setListenUI(true);
   if(!S.lines.length) showMsg("Listening…", "Hold your phone near the music for a few seconds.");
@@ -470,12 +513,14 @@ async function listen(auto = false){
           ? "Gaao needs the microphone to hear the song. In Safari, tap aA in the address bar, then Website Settings, and set Microphone to Allow."
           : "Couldn't open the microphone (" + e.name + ")."), { ui:"Microphone is off" });
       }
-      const clip = await recordClip(stream, CLIP_MS);
+      let clip;
+      try{ clip = await captureClip(stream, CLIP_MS, n => { if(n > 0) $("listenTxt").textContent = "Listening " + n; }); }
+      catch(e){ throw Object.assign(new Error("The microphone stopped unexpectedly (" + (e.name || e.message) + "). Tap Listen to try again."), { ui:"Recording failed" }); }
       stream.getTracks().forEach(t => t.stop()); stream = null;
-      if(!clip.samples) throw Object.assign(new Error("Tap Listen to start again."), { ui:"Paused" });
-      if(clip.rms < 0.002) throw Object.assign(new Error("I couldn't hear anything. Check the microphone isn't covered and move closer to the music."), { ui:"Too quiet" });
+      $("listenTxt").textContent = "Identifying";
+      if(clip.bytes < 1000) throw Object.assign(new Error("The recording came back empty. Tap Listen to try again; if it keeps happening, open ⚙︎ and tap Test microphone."), { ui:"Empty recording" });
       setChip("Identifying");
-      const fd = new FormData(); fd.append("file", clip.blob, "clip.wav");
+      const fd = new FormData(); fd.append("file", clip.blob, clip.name);
       const res = await api("/recognize", { method:"POST", body:fd });
       if(!res.match){
         if(attempt < (auto ? 1 : 2)){ setChip("Listening again"); continue; }
@@ -1012,6 +1057,17 @@ $("shareBtn").onclick = async e => {
 $("clearCache").onclick = e => {
   try{ Object.keys(localStorage).filter(k => /^(v\d:)?song:/.test(k)).forEach(k => localStorage.removeItem(k)); }catch{}
   e.currentTarget.textContent = "Cleared"; S.id = null;
+};
+$("micBtn").onclick = async () => {
+  const box = $("diag"); box.textContent = "Recording 3 seconds…";
+  let stream;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
+    const c = await captureClip(stream, 3000);
+    box.textContent = (c.bytes > 1000 ? "✓ Microphone works: " : "✕ Recording was empty: ") + Math.round(c.bytes / 1024) + " KB as " + c.name +
+      "\nListen is " + (B.listen ? "on" : B.ok ? "off on the server (recognition key missing)" : "unknown (server not checked)") + ".";
+  }catch(e){ box.textContent = "✕ Microphone: " + (e.name === "NotAllowedError" ? "blocked. In Safari tap aA, then Website Settings, and set Microphone to Allow." : (e.name || "") + " " + (e.message || "")); }
+  finally{ stream?.getTracks().forEach(t => t.stop()); }
 };
 $("testBtn").onclick = async () => {
   const box = $("diag"), out = []; box.textContent = "Testing…";
