@@ -65,6 +65,7 @@ The end-to-end tests run at iPhone size (390x844) and desktop size (1440x900) wi
 
 1. Create a free project at [supabase.com](https://supabase.com) and copy its project ref.
 2. Point the front end at it: change `BACKEND` in `src/config.js`, and `GAAO_BACKEND` in `.github/workflows/keepalive.yml`.
+   If your site isn't served under `/gaao/` (a different repo name or your own domain), also set `GAAO_BASE` for the build, for example `GAAO_BASE=/my-repo/` in `.github/workflows/deploy.yml`, and update the URL in `playwright.config.js`.
 3. Log in and link (this opens your browser; the token is stored by the CLI, not in this repo):
 
    ```bash
@@ -137,4 +138,4 @@ Supabase pauses free projects after about a week without use. `.github/workflows
 
 ## License
 
-Code: [MIT](LICENSE). Song lyrics belong to their owners and are not part of this repository.
+Code: [MIT](LICENSE). Song lyrics belong to their owners; the app fetches them from LRCLIB when a song plays, and the MIT license does not cover them.
