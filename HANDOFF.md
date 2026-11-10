@@ -9,12 +9,13 @@
 - **Sharing:** links of the form `https://fambus.github.io/gaao/?invite=<code>` (`&cid=<spotify client id>` is optional). Every backend call sends the `x-gaao-invite` header. Daily caps come from `invites.recognize_per_day` and `invites.songs_per_day` via `gaao_bump()`.
 - **UI:** dark, single screen, a welcome sheet ("Listen nearby" / "Follow my Spotify"), and a settings sheet with status, Share, Test connections, Test microphone, toggles (wake lock, original script) and clear cache.
 
-## Live state and blockers (fix these first)
-1. **The Supabase project `gaao` is PAUSED** (status INACTIVE; free tier pauses after about a week without use). Restore it in the dashboard. Long term, add a keep-alive (for example a weekly GitHub Action that hits `/health`) or upgrade the plan.
-2. **No server secrets are set**, so `/health` returns `listen:false, meanings:false`. Add `AUDD_API_TOKEN` (from dashboard.audd.io: 300 free requests, then about $5 per 1,000) and `ANTHROPIC_API_KEY`. Consider `GAAO_MODEL=claude-haiku-5-5` (about 0.2¢ per new song, versus about 3¢ on Sonnet 5.5).
-3. **The GitHub repo `fambus/gaao` may still serve an older `index.html`.** The `index.html` in this bundle is the newest.
-4. The `pg_net` extension is still installed from earlier testing (an advisor warning only). Drop it if unused.
-5. The owner's personal invite code is in the `invites` table, not in this repo. Keep it that way.
+## Live state and blockers (updated 10 Nov 2026, during Phase A of PLAN.md)
+1. The Supabase project `gaao` is **active** again. `.github/workflows/keepalive.yml` pings `/health?db=1` twice a week so it doesn't pause.
+2. **No server secrets are set**, so `/health` returns `listen:false, meanings:false`. Add `AUDD_API_TOKEN` (from dashboard.audd.io: 300 free requests, then about $5 per 1,000) and `ANTHROPIC_API_KEY` in the Supabase dashboard under Edge Functions → Secrets. Set `GAAO_MODEL=claude-haiku-5-5` (about 0.2¢ per new song, versus about 3¢ on Sonnet 5.5).
+3. The repo is now a Vite project. GitHub Pages is built by `.github/workflows/deploy.yml`, not served from the repo root.
+4. The `pg_net` extension is unused (checked: no functions, triggers or queued requests). `supabase/migrations/20261110000001_drop_pg_net.sql` drops it; it still has to be applied to the live database.
+5. **The `invites` table is empty.** The owner's invite code has to be re-created in the dashboard's SQL editor (template in README.md). Invite codes never go in this repo.
+6. The live database's migration history uses different timestamps (`20261018143458`, `20261018144131`) from the two older files in `supabase/migrations/`. Line them up before the first `supabase db push`.
 
 ## Bug: lyrics not shown in English letters (see docs/bug-urdu-not-romanized.png)
 "Hum Dekhenge" (Iqbal Bano) comes from LRCLIB in **Urdu (Perso-Arabic) script**. `romanize()` only knows Gurmukhi and Devanagari, so it returns the line unchanged. Meanings still arrive because the translators accept any script. Likely fixes, best first:

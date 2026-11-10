@@ -1,7 +1,16 @@
+# secrets
 .env
 .env.*
-supabase/.temp/
-supabase/.branches/
-node_modules/
+!.env.example
 *.local.*
 HANDOFF.private.md
+
+# supabase CLI state
+supabase/.temp/
+supabase/.branches/
+
+# build and test output
+node_modules/
+dist/
+test-results/
+playwright-report/

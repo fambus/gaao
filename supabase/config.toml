@@ -1,0 +1,6 @@
+# Supabase CLI config. Link once with: npx supabase link --project-ref <your-project-ref>
+project_id = "gaao"
+
+# The function does its own access checks (invite codes, later sign-in), so the gateway JWT check is off.
+[functions.gaao]
+verify_jwt = false

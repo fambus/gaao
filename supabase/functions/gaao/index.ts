@@ -1,5 +1,5 @@
 // Gaao backend: song recognition (AudD) and line-by-line meanings (Claude), shared across invited users.
-// Routes: GET /health, POST /recognize (multipart "file"), POST /meanings ({ lrclib_id })
+// Routes: GET /health (add ?db=1 to ping the database too), POST /recognize (multipart "file"), POST /meanings ({ lrclib_id })
 // Access: every request carries an invite code in the x-gaao-invite header (see the invites table).
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import postgres from "npm:postgres@3.4.5";
@@ -182,13 +182,16 @@ const inflight = new Map<string, Promise<Record<string, unknown> | null>>();
 /* ---------- router ---------- */
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
-  const path = new URL(req.url).pathname.replace(/\/+$/, "");
+  const url = new URL(req.url);
+  const path = url.pathname.replace(/\/+$/, "");
   try {
     const inv = await getInvite(req.headers.get("x-gaao-invite"));
     if (path.endsWith("/health")) {
+      // ?db=1 also runs a query, so the weekly keep-alive counts as database activity (free projects pause when idle).
+      const db = url.searchParams.has("db") ? { db: (await sql`select 1 as ok`).length === 1 } : {};
       return json({
         ok: true, invite: !!inv, share_code: inv?.share_code ?? null, model: MODEL,
-        listen: !!Deno.env.get("AUDD_API_TOKEN"), meanings: !!Deno.env.get("ANTHROPIC_API_KEY"),
+        listen: !!Deno.env.get("AUDD_API_TOKEN"), meanings: !!Deno.env.get("ANTHROPIC_API_KEY"), ...db,
       });
     }
     if (!inv) return json({ code: "invite", error: "This link's invite code isn't valid. Ask for a fresh Gaao link." }, 401);

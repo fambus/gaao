@@ -3,7 +3,11 @@
 Sing-along web app: shows the playing song's lyrics in English letters (romanized), with a one-line English meaning under each line, synced to the music. Built for Punjabi, Haryanvi, Hindi/Urdu and Spanish songs. Full background and roadmap: @HANDOFF.md
 
 ## Layout
-- `index.html`: the whole front end (vanilla JS, no build step). Served by GitHub Pages at https://fambus.github.io/gaao/
+- `index.html` + `src/`: the front end. Vanilla JS ES modules, built with Vite (`base: /gaao/`), deployed to GitHub Pages at https://fambus.github.io/gaao/ by `.github/workflows/deploy.yml` on every push to `main`.
+  - `src/main.js` boots; `src/state.js` holds `LS` (storage), `S` (playback), `B` (backend status); `src/track.js` loads a song.
+  - `src/roman/` romanization, `src/lyrics/` LRCLIB, `src/meanings/` Claude and free translators, `src/sources/` Spotify and Listen, `src/ui/` screens.
+- `tests/`: `*.test.js` are Vitest unit tests; `tests/e2e/*.spec.js` are Playwright tests with all network mocked in `tests/e2e/fixtures.js`.
+- `PLAN.md`: the approved phase plan. Check it before starting a phase.
 - `supabase/functions/gaao/index.ts`: Deno edge function. Routes `/health`, `/recognize` (AudD), `/meanings` (Claude). Project ref `oqznbxiibpiocvwoqexj` (ap-south-1).
 - `supabase/migrations/`: tables `songs` (shared meanings cache), `invites`, `usage`, and function `gaao_bump`.
 
@@ -15,6 +19,8 @@ Sing-along web app: shows the playing song's lyrics in English letters (romanize
 - Don't scrape lyrics or annotation sites (Genius etc.). Use official APIs only.
 
 ## Verify before saying done
-- `node --check` on the extracted `<script>` (or a lint/test script once one exists).
-- Playwright run at iPhone size with a fake mic (`--use-fake-device-for-media-stream`) and a mocked backend; screenshot the result and look at it.
-- Backend: `supabase functions serve gaao` locally, then `curl /health`. Deploy with `supabase functions deploy gaao --no-verify-jwt`.
+- `npm run check:secrets`, `npm test` (Vitest) and `npm run build`.
+- `npm run test:e2e`: Playwright at iPhone 390x844 and desktop 1440x900 with a fake mic and a mocked backend. Screenshots go to `test-results/shots/`; look at them.
+- Backend: `npx supabase functions serve gaao` locally, then `curl /health`. Deploy with `npx supabase functions deploy gaao --no-verify-jwt`.
+- This PC has Node 20.11, so Vite stays on v6 and Vitest on v3 (newer majors need Node 20.19+). CI uses Node 22.
+- Commits use the GitHub noreply address (set in the repo's local git config), so no personal email lands in the public history.
